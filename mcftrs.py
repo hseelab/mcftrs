@@ -45,8 +45,9 @@ class Updater(Thread):
         self.camera.set_camera_gain(camera_gain)
         self.camera.set_exposure_time(exposure_time)
 
-    def set_handler(self, handler, accum_count, pixel_count):
-        self.handler = handler
+    def set_handler(self, image_handler, spectrum_handler, accum_count, pixel_count):
+        self.image_handler = image_handler
+        self.spectrum_handler = spectrum_handler
         self.raw_data = np.zeros((accum_count, pixel_count))
         self.fft_data = np.zeros((accum_count, pixel_count*4))
 
@@ -67,16 +68,30 @@ class Updater(Thread):
                 continue
 
             raw_data = self.camera.get_frame()
-            fft_data = get_fft(raw_data)
+            if len(raw_data.shape) == 1:
+                fft_data = get_fft(raw_data)
 
-            if n >= len(self.raw_data): n = 0
-            if len(raw_data) == len(self.raw_data[n]):
-                self.raw_data[n] = raw_data
-                self.fft_data[n] = fft_data
-                y1 = np.average(self.raw_data, axis=0)
-                y2 = np.average(self.fft_data, axis=0)
-                self.handler(y1, y2)
-                n += 1
+                if n >= len(self.raw_data): n = 0
+                if len(raw_data) == len(self.raw_data[n]):
+                    self.raw_data[n] = raw_data
+                    self.fft_data[n] = fft_data
+                    y1 = np.average(self.raw_data, axis=0)
+                    y2 = np.average(self.fft_data, axis=0)
+                    self.spectrum_handler(y1, y2)
+                    n += 1
+            else:
+                self.image_handler(raw_data)
+
+
+class Image(FigureCanvasTkAgg):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ax = self.figure.add_subplot()
+        self.image = self.ax.imshow(np.random.rand(2048,2048))
+
+    def show(self, image):
+        self.image.set_data(image)
+        self.draw()
 
 
 class Plotter(FigureCanvasTkAgg):
@@ -204,6 +219,7 @@ class App(Tk):
         self.title('Multi-channel Fourier Transform Raman Spectrometer')
         self.protocol('WM_DELETE_WINDOW', self.quit)
 
+        self.image = Image(Figure(), self)
         self.plotter = Plotter(Figure(), self)
         self.plotter.get_tk_widget().pack(side='top')
         self.updater = Updater()
@@ -262,6 +278,9 @@ class App(Tk):
         Label(self.aoi_controls, text=' Δy =').pack(side='left')
         aoivbin = Entry(self.aoi_controls, textvariable=self.aoivbin)
         aoivbin.pack(side='left')
+        Label(self.aoi_controls, text='  ').pack(side='left')
+        Button(self.aoi_controls, text='Image', command=self.show_image).pack(padx=2, pady=3, side='left')
+        Button(self.aoi_controls, text='Spectrum', command=self.show_spectrum).pack(padx=2, pady=3, side='left')
 
         Label(self.dummy_controls, text='Dummy:').pack(side='left')
         dummy_signals = [Entry(self.dummy_controls, textvariable=x) for x in self.dummy_signals]
@@ -287,6 +306,16 @@ class App(Tk):
         self.bind('<Control-s>', self.save_plot)
         self.bind('<Control-q>', self.quit)
 
+    def show_image(self):
+        self.plotter.get_tk_widget().forget()
+        self.updater.camera.set_area_of_interest(1, 0, 2048)
+        self.image.get_tk_widget().pack(side='top')
+
+    def show_spectrum(self):
+        self.image.get_tk_widget().forget()
+        self.updater.camera.set_area_of_interest(self.aoivbin.get(), self.aoitop.get(), 1)
+        self.plotter.get_tk_widget().pack(side='top')
+
     def select_camera(self, *args):
         self.updater.paused = True
         camera = self.updater.cameras[self.camera_type.get()]
@@ -311,7 +340,7 @@ class App(Tk):
             camera = self.updater.cameras.get(self.camera_type.get())
             if camera != self.updater.camera or accum_count > 0 and accum_count != len(self.updater.raw_data):
                 if camera:
-                    self.updater.set_handler(self.plotter.set_data, accum_count, camera.pixel_count)
+                    self.updater.set_handler(self.image.show, self.plotter.set_data, accum_count, camera.pixel_count)
         except tk.TclError: pass
 
     def set_camera_gain(self, *args):
@@ -338,7 +367,7 @@ class App(Tk):
 
     def set_area_of_interest(self, *args):
         try:
-            self.updater.camera.set_area_of_interest(self.aoitop.get(), self.aoivbin.get())
+            self.updater.camera.set_area_of_interest(self.aoivbin.get(), self.aoitop.get(), 1)
         except tk.TclError: pass
 
     def set_dummy_signal(self, *args):
@@ -398,4 +427,6 @@ class App(Tk):
 
 
 if __name__ == '__main__':
-    App().mainloop()
+    app = App()
+    app.geometry("1600x993")
+    app.mainloop()

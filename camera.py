@@ -209,12 +209,16 @@ class ZL41Wave(Camera):
 
     def set_exposure_time(self, exposure_time):
         with self.lock:
+            if self.cam.CameraAcquiring:
+                self.cam.AcquisitionStop()
+                self.cam.flush()
             if exposure_time < self.min_exposure_time: exposure_time = self.min_exposure_time
             if exposure_time > self.max_exposure_time: exposure_time = self.max_exposure_time
             self.exposure_time = exposure_time
             self.cam.ExposureTime = exposure_time / 1000
+            self.cam.AcquisitionStart()
 
-    def set_area_of_interest(self, top, vbin):
+    def set_area_of_interest(self, vbin, top, height):
         with self.lock:
             if self.cam.CameraAcquiring:
                 self.cam.AcquisitionStop()
@@ -225,6 +229,9 @@ class ZL41Wave(Camera):
             if top < self.cam.min_AOITop: top = self.cam.min_AOITop
             if top > self.cam.max_AOITop: top = self.cam.max_AOITop
             self.cam.AOITop = top
+            if height < self.cam.min_AOIHeight: height = self.cam.min_AOIHeight
+            if height > self.cam.max_AOIHeight: height = self.cam.max_AOIHeight
+            self.cam.AOIHeight = height
             self.cam.AcquisitionStart()
 
     def get_frame(self):
@@ -233,7 +240,10 @@ class ZL41Wave(Camera):
             self.cam.queue(que, self.cam.ImageSizeBytes)
             self.cam.SoftwareTrigger()
             acq = self.cam.wait_buffer(2000)
-            return (acq.image[0]-100) / 2**16
+            if self.cam.AOIHeight == 1:
+                return (acq.image[0]-100) / 2**16
+            else:
+                return (acq.image-100) / 2**12
 
     def close_camera(self):
         with self.lock:
